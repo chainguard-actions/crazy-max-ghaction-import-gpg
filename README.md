@@ -1,6 +1,12 @@
 # crazy-max/ghaction-import-gpg
 
-Hardened GitHub Action by [Chainguard](https://www.chainguard.dev).
+Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at [https://github.com/crazy-max/ghaction-import-gpg](https://github.com/crazy-max/ghaction-import-gpg).
+
+## Versions
+
+| Version | Tag | Upstream commit |
+|---------|-----|-----------------|
+| v7.0.0 | [`v7.0.0`](https://github.com/chainguard-actions/ghaction-import-gpg/tree/v7.0.0) | — |
 
 ## Privacy
 
