@@ -1,5 +1,7 @@
 # crazy-max/ghaction-import-gpg
 
+GitHub Action to import a GPG key
+
 Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at [https://github.com/crazy-max/ghaction-import-gpg](https://github.com/crazy-max/ghaction-import-gpg).
 
 ## Versions
