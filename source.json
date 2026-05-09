@@ -1,4 +1,6 @@
 {
-  "upstream": "crazy-max/ghaction-import-gpg",
-  "version": "v7.0.0"
+  "owner": "crazy-max",
+  "repo": "ghaction-import-gpg",
+  "version": "",
+  "url": "https://github.com/crazy-max/ghaction-import-gpg"
 }
