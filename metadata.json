@@ -1,7 +1,0 @@
-{
-  "owner": "crazy-max",
-  "name": "ghaction-import-gpg",
-  "visibility": "internal",
-  "description": "GitHub Action to import a GPG key",
-  "block_publish": false
-}
