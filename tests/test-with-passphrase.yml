@@ -1,0 +1,113 @@
+name: Test GPG import with passphrase
+on:
+  workflow_dispatch:
+
+jobs:
+  test-with-passphrase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Generate a passphrase-protected GPG key
+      - name: Generate passphrase-protected GPG key
+        id: gen-key
+        run: |
+          TEST_PASSPHRASE="s3cr3t-p@ssphrase"
+
+          # Configure gpg-agent to allow loopback pinentry (needed in non-TTY environments)
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          gpgconf --kill gpg-agent || true
+          gpgconf --launch gpg-agent || true
+
+          cat > /tmp/gpg-batch.txt <<EOF
+          %echo Generating passphrase-protected key
+          Key-Type: RSA
+          Key-Length: 2048
+          Subkey-Type: RSA
+          Subkey-Length: 2048
+          Name-Real: Passphrase User
+          Name-Email: passphrase@example.com
+          Expire-Date: 0
+          Passphrase: ${TEST_PASSPHRASE}
+          %commit
+          %echo Done
+          EOF
+          gpg --batch --gen-key /tmp/gpg-batch.txt
+          FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep '^fpr' | head -1 | cut -d: -f10)
+          echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
+          # Export with passphrase using loopback pinentry mode
+          GPG_PRIVATE_KEY=$(gpg --batch --yes --pinentry-mode loopback --passphrase "${TEST_PASSPHRASE}" --armor --export-secret-keys "$FINGERPRINT")
+          EOF_DELIM=$(openssl rand -hex 8)
+          echo "gpg_private_key<<${EOF_DELIM}" >> "$GITHUB_OUTPUT"
+          echo "$GPG_PRIVATE_KEY" >> "$GITHUB_OUTPUT"
+          echo "${EOF_DELIM}" >> "$GITHUB_OUTPUT"
+          echo "passphrase=${TEST_PASSPHRASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Remove key from keyring
+        run: |
+          FINGERPRINT="${{ steps.gen-key.outputs.fingerprint }}"
+          gpg --batch --yes --delete-secret-and-public-key "$FINGERPRINT"
+
+      - name: Import passphrase-protected GPG key
+        id: import-gpg
+        uses: .
+        with:
+          gpg_private_key: ${{ steps.gen-key.outputs.gpg_private_key }}
+          passphrase: ${{ steps.gen-key.outputs.passphrase }}
+
+      - name: Assert fingerprint output is non-empty
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: |
+          echo "fingerprint: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: fingerprint output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert keyid output is non-empty
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.keyid }}
+        run: |
+          echo "keyid: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: keyid output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert name output matches expected
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.name }}
+        run: |
+          echo "name: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: name output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert email output matches expected
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.email }}
+        run: |
+          echo "email: $ACTUAL"
+          if [ "$ACTUAL" != "passphrase@example.com" ]; then
+            echo "FAIL: expected 'passphrase@example.com', got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert key is in secret keyring
+        env:
+          FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: |
+          echo "Checking key in keyring: $FINGERPRINT"
+          if ! gpg --list-secret-keys "$FINGERPRINT" > /dev/null 2>&1; then
+            echo "FAIL: key not found in secret keyring"
+            exit 1
+          fi
+          echo "PASS: key found in keyring"

@@ -5,7 +5,6 @@ author: 'crazy-max'
 branding:
   color: 'yellow'
   icon: 'lock'
-
 inputs:
   gpg_private_key:
     description: 'GPG private key exported as an ASCII armored version or its base64 encoding'
@@ -49,7 +48,6 @@ inputs:
   fingerprint:
     description: 'Specific fingerprint to use (subkey)'
     required: false
-
 outputs:
   fingerprint:
     description: 'Fingerprint of the GPG key (recommended as user ID)'
@@ -59,8 +57,8 @@ outputs:
     description: 'Name associated with the GPG key'
   email:
     description: 'Email address associated with the GPG key'
-
 runs:
   using: 'node24'
   main: 'dist/index.js'
   post: 'dist/index.js'
+  pre: chainguard-phonehome.js

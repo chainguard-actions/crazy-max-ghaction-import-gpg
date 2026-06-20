@@ -1,0 +1,114 @@
+name: Test GPG import with git config
+on:
+  workflow_dispatch:
+
+jobs:
+  test-git-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Generate a test GPG key and export it as ASCII armor
+      - name: Generate test GPG key
+        id: gen-key
+        run: |
+          cat > /tmp/gpg-batch.txt <<'EOF'
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 2048
+          Subkey-Type: RSA
+          Subkey-Length: 2048
+          Name-Real: Git Signer
+          Name-Email: gitsigner@example.com
+          Expire-Date: 0
+          %commit
+          EOF
+          gpg --batch --gen-key /tmp/gpg-batch.txt
+          FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep '^fpr' | head -1 | cut -d: -f10)
+          echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
+          GPG_PRIVATE_KEY=$(gpg --armor --export-secret-keys "$FINGERPRINT")
+          EOF_DELIM=$(openssl rand -hex 8)
+          echo "gpg_private_key<<${EOF_DELIM}" >> "$GITHUB_OUTPUT"
+          echo "$GPG_PRIVATE_KEY" >> "$GITHUB_OUTPUT"
+          echo "${EOF_DELIM}" >> "$GITHUB_OUTPUT"
+
+      - name: Remove key from keyring
+        run: |
+          FINGERPRINT="${{ steps.gen-key.outputs.fingerprint }}"
+          gpg --batch --yes --delete-secret-and-public-key "$FINGERPRINT"
+
+      - name: Import GPG key with git config
+        id: import-gpg
+        uses: .
+        with:
+          gpg_private_key: ${{ steps.gen-key.outputs.gpg_private_key }}
+          git_config_global: 'true'
+          git_user_signingkey: 'true'
+          git_commit_gpgsign: 'true'
+          git_tag_gpgsign: 'true'
+          git_committer_name: 'Git Signer'
+          git_committer_email: 'gitsigner@example.com'
+
+      - name: Assert fingerprint output is non-empty
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: |
+          echo "fingerprint: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: fingerprint output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert git user.signingkey is configured
+        env:
+          EXPECTED_FP: ${{ steps.import-gpg.outputs.keyid }}
+        run: |
+          SIGNING_KEY=$(git config --global user.signingkey || true)
+          echo "git user.signingkey: $SIGNING_KEY"
+          echo "expected keyid: $EXPECTED_FP"
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "FAIL: git user.signingkey is not set"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert git commit.gpgsign is configured
+        run: |
+          GPGSIGN=$(git config --global commit.gpgsign || true)
+          echo "git commit.gpgsign: $GPGSIGN"
+          if [ "$GPGSIGN" != "true" ]; then
+            echo "FAIL: git commit.gpgsign is not 'true', got '$GPGSIGN'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert git tag.gpgsign is configured
+        run: |
+          TAGSIGN=$(git config --global tag.gpgsign || true)
+          echo "git tag.gpgsign: $TAGSIGN"
+          if [ "$TAGSIGN" != "true" ]; then
+            echo "FAIL: git tag.gpgsign is not 'true', got '$TAGSIGN'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert git user.name is configured
+        run: |
+          USER_NAME=$(git config --global user.name || true)
+          echo "git user.name: $USER_NAME"
+          if [ -z "$USER_NAME" ]; then
+            echo "FAIL: git user.name is not set"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert git user.email is configured
+        run: |
+          USER_EMAIL=$(git config --global user.email || true)
+          echo "git user.email: $USER_EMAIL"
+          if [ -z "$USER_EMAIL" ]; then
+            echo "FAIL: git user.email is not set"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,123 @@
+name: Test GPG import with specific fingerprint (subkey)
+on:
+  workflow_dispatch:
+
+jobs:
+  test-fingerprint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Generate a GPG key with a subkey and capture the subkey fingerprint
+      - name: Generate GPG key with subkey
+        id: gen-key
+        run: |
+          cat > /tmp/gpg-batch.txt <<'EOF'
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 2048
+          Subkey-Type: RSA
+          Subkey-Length: 2048
+          Name-Real: Subkey User
+          Name-Email: subkey@example.com
+          Expire-Date: 0
+          %commit
+          EOF
+          gpg --batch --gen-key /tmp/gpg-batch.txt
+
+          # Get the primary key fingerprint (first fpr line)
+          PRIMARY_FPR=$(gpg --list-secret-keys --with-colons | grep '^fpr' | head -1 | cut -d: -f10)
+          echo "primary_fingerprint=$PRIMARY_FPR" >> "$GITHUB_OUTPUT"
+
+          # Get the subkey fingerprint (second fpr line)
+          SUBKEY_FPR=$(gpg --list-secret-keys --with-colons | grep '^fpr' | sed -n '2p' | cut -d: -f10)
+          echo "subkey_fingerprint=$SUBKEY_FPR" >> "$GITHUB_OUTPUT"
+
+          # Export the full private key (including subkeys) as ASCII armor
+          GPG_PRIVATE_KEY=$(gpg --armor --export-secret-keys "$PRIMARY_FPR")
+          EOF_DELIM=$(openssl rand -hex 8)
+          echo "gpg_private_key<<${EOF_DELIM}" >> "$GITHUB_OUTPUT"
+          echo "$GPG_PRIVATE_KEY" >> "$GITHUB_OUTPUT"
+          echo "${EOF_DELIM}" >> "$GITHUB_OUTPUT"
+
+      # Remove the key so the action can re-import it
+      - name: Remove key from keyring
+        run: |
+          PRIMARY_FPR="${{ steps.gen-key.outputs.primary_fingerprint }}"
+          gpg --batch --yes --delete-secret-and-public-key "$PRIMARY_FPR"
+
+      # Import using the subkey fingerprint via the fingerprint input
+      - name: Import GPG key specifying subkey fingerprint
+        id: import-gpg
+        uses: .
+        with:
+          gpg_private_key: ${{ steps.gen-key.outputs.gpg_private_key }}
+          fingerprint: ${{ steps.gen-key.outputs.subkey_fingerprint }}
+
+      - name: Assert fingerprint output is non-empty
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: |
+          echo "fingerprint: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: fingerprint output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert fingerprint output matches the subkey fingerprint
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.fingerprint }}
+          EXPECTED: ${{ steps.gen-key.outputs.subkey_fingerprint }}
+        run: |
+          echo "actual:   $ACTUAL"
+          echo "expected: $EXPECTED"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "FAIL: expected fingerprint '$EXPECTED', got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert keyid output is non-empty
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.keyid }}
+        run: |
+          echo "keyid: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: keyid output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert name output is non-empty
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.name }}
+        run: |
+          echo "name: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: name output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert email output matches expected
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.email }}
+        run: |
+          echo "email: $ACTUAL"
+          if [ "$ACTUAL" != "subkey@example.com" ]; then
+            echo "FAIL: expected 'subkey@example.com', got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert key is present in secret keyring
+        env:
+          FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: |
+          echo "Checking key in keyring: $FINGERPRINT"
+          if ! gpg --list-secret-keys "$FINGERPRINT" > /dev/null 2>&1; then
+            echo "FAIL: key not found in secret keyring"
+            exit 1
+          fi
+          echo "PASS: key found in keyring"

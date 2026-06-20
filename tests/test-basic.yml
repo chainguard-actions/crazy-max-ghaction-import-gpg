@@ -1,0 +1,103 @@
+name: Test basic GPG import
+on:
+  workflow_dispatch:
+
+jobs:
+  test-basic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Generate a test GPG key and export it as ASCII armor
+      - name: Generate test GPG key
+        id: gen-key
+        run: |
+          # Generate a batch GPG key
+          cat > /tmp/gpg-batch.txt <<'EOF'
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 2048
+          Subkey-Type: RSA
+          Subkey-Length: 2048
+          Name-Real: Test User
+          Name-Email: test@example.com
+          Expire-Date: 0
+          %commit
+          EOF
+          gpg --batch --gen-key /tmp/gpg-batch.txt
+          # Export the private key as ASCII armor
+          FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep '^fpr' | head -1 | cut -d: -f10)
+          echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
+          GPG_PRIVATE_KEY=$(gpg --armor --export-secret-keys "$FINGERPRINT")
+          # Store as multiline env var via delimiter
+          EOF_DELIM=$(openssl rand -hex 8)
+          echo "gpg_private_key<<${EOF_DELIM}" >> "$GITHUB_OUTPUT"
+          echo "$GPG_PRIVATE_KEY" >> "$GITHUB_OUTPUT"
+          echo "${EOF_DELIM}" >> "$GITHUB_OUTPUT"
+
+      # Delete the key from the keyring so the action can re-import it
+      - name: Remove key from keyring
+        run: |
+          FINGERPRINT="${{ steps.gen-key.outputs.fingerprint }}"
+          gpg --batch --yes --delete-secret-and-public-key "$FINGERPRINT"
+
+      - name: Import GPG key
+        id: import-gpg
+        uses: .
+        with:
+          gpg_private_key: ${{ steps.gen-key.outputs.gpg_private_key }}
+
+      - name: Assert fingerprint output is non-empty
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: |
+          echo "fingerprint: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: fingerprint output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert keyid output is non-empty
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.keyid }}
+        run: |
+          echo "keyid: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: keyid output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert name output
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.name }}
+        run: |
+          echo "name: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: name output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert email output
+        env:
+          ACTUAL: ${{ steps.import-gpg.outputs.email }}
+        run: |
+          echo "email: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: email output is empty"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert key is importable (verify in keyring)
+        env:
+          FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: |
+          echo "Checking key in keyring: $FINGERPRINT"
+          if ! gpg --list-secret-keys "$FINGERPRINT" > /dev/null 2>&1; then
+            echo "FAIL: key not found in secret keyring"
+            exit 1
+          fi
+          echo "PASS: key found in keyring"
