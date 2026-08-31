@@ -1,0 +1,107 @@
+name: Test GPG import with git signing config
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Generate test GPG key (no passphrase)
+        run: |
+          cat > /tmp/gpg-gen-params <<'EOF'
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 2048
+          Subkey-Type: RSA
+          Subkey-Length: 2048
+          Name-Real: Git Signer
+          Name-Email: gitsigner@example.com
+          Expire-Date: 0
+          %commit
+          EOF
+          gpg --batch --gen-key /tmp/gpg-gen-params
+          FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep '^fpr' | head -1 | cut -d: -f10)
+          echo "Generated key fingerprint: $FINGERPRINT"
+          gpg --armor --export-secret-keys "$FINGERPRINT" > /tmp/test-gpg-key.asc
+          echo "GPG_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
+          cat /tmp/test-gpg-key.asc >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - id: import
+        uses: .
+        with:
+          gpg_private_key: ${{ env.GPG_PRIVATE_KEY }}
+          git_user_signingkey: 'true'
+          git_commit_gpgsign: 'true'
+          git_tag_gpgsign: 'true'
+          git_committer_name: 'Git Signer'
+          git_committer_email: 'gitsigner@example.com'
+
+      - name: Assert fingerprint output is set
+        env:
+          FINGERPRINT: ${{ steps.import.outputs.fingerprint }}
+        run: |
+          echo "fingerprint: $FINGERPRINT"
+          if [ -z "$FINGERPRINT" ]; then
+            echo "FAIL: fingerprint output is empty"
+            exit 1
+          fi
+          echo "PASS: fingerprint is '$FINGERPRINT'"
+
+      - name: Assert git signing key is configured
+        env:
+          FINGERPRINT: ${{ steps.import.outputs.fingerprint }}
+        run: |
+          echo "Checking git signing key config..."
+          SIGNING_KEY=$(git config --local user.signingkey 2>/dev/null || echo "")
+          echo "git user.signingkey: $SIGNING_KEY"
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "FAIL: git user.signingkey is not set"
+            exit 1
+          fi
+          echo "PASS: git signing key is configured as '$SIGNING_KEY'"
+
+      - name: Assert git commit gpgsign is configured
+        run: |
+          echo "Checking git commit.gpgsign config..."
+          GPGSIGN=$(git config --local commit.gpgsign 2>/dev/null || echo "")
+          echo "git commit.gpgsign: $GPGSIGN"
+          if [ "$GPGSIGN" != "true" ]; then
+            echo "FAIL: git commit.gpgsign is not 'true', got '$GPGSIGN'"
+            exit 1
+          fi
+          echo "PASS: git commit.gpgsign is 'true'"
+
+      - name: Assert git tag gpgsign is configured
+        run: |
+          echo "Checking git tag.gpgsign config..."
+          TAGSIGN=$(git config --local tag.gpgsign 2>/dev/null || echo "")
+          echo "git tag.gpgsign: $TAGSIGN"
+          if [ "$TAGSIGN" != "true" ]; then
+            echo "FAIL: git tag.gpgsign is not 'true', got '$TAGSIGN'"
+            exit 1
+          fi
+          echo "PASS: git tag.gpgsign is 'true'"
+
+      - name: Assert git committer name is configured
+        run: |
+          echo "Checking git user.name config..."
+          USERNAME=$(git config --local user.name 2>/dev/null || echo "")
+          echo "git user.name: $USERNAME"
+          if [ "$USERNAME" != "Git Signer" ]; then
+            echo "FAIL: git user.name is not 'Git Signer', got '$USERNAME'"
+            exit 1
+          fi
+          echo "PASS: git user.name is 'Git Signer'"
+
+      - name: Assert git committer email is configured
+        run: |
+          echo "Checking git user.email config..."
+          USEREMAIL=$(git config --local user.email 2>/dev/null || echo "")
+          echo "git user.email: $USEREMAIL"
+          if [ "$USEREMAIL" != "gitsigner@example.com" ]; then
+            echo "FAIL: git user.email is not 'gitsigner@example.com', got '$USEREMAIL'"
+            exit 1
+          fi
+          echo "PASS: git user.email is 'gitsigner@example.com'"

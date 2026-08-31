@@ -1,4 +1,4 @@
-name: Test GPG import with specific fingerprint (subkey)
+name: Test GPG import with passphrase
 on:
   workflow_dispatch:
 jobs:
@@ -7,60 +7,46 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Generate test GPG key with subkey and capture subkey fingerprint
+      - name: Generate test GPG key with passphrase
         run: |
-          # Generate a test GPG key (primary + subkey) with no passphrase
+          # Generate a test GPG key protected by a passphrase
           cat > /tmp/gpg-gen-params <<'EOF'
-          %no-protection
           Key-Type: RSA
           Key-Length: 2048
           Subkey-Type: RSA
           Subkey-Length: 2048
-          Name-Real: Subkey User
-          Name-Email: subkey@example.com
+          Name-Real: Passphrase User
+          Name-Email: passphrase@example.com
           Expire-Date: 0
+          Passphrase: mysecretpassphrase
           %commit
           EOF
           gpg --batch --gen-key /tmp/gpg-gen-params
-
-          # Get the primary key fingerprint (first fpr line)
-          PRIMARY_FPR=$(gpg --list-secret-keys --with-colons | grep '^fpr' | head -1 | cut -d: -f10)
-          echo "Primary key fingerprint: $PRIMARY_FPR"
-
-          # Get the subkey fingerprint (second fpr line)
-          SUBKEY_FPR=$(gpg --list-secret-keys --with-colons | grep '^fpr' | sed -n '2p' | cut -d: -f10)
-          echo "Subkey fingerprint: $SUBKEY_FPR"
-
-          # Export the full key (primary + subkey) in ASCII armor
-          gpg --armor --export-secret-keys "$PRIMARY_FPR" > /tmp/test-gpg-key-subkey.asc
-
+          FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep '^fpr' | head -1 | cut -d: -f10)
+          echo "Generated key fingerprint: $FINGERPRINT"
+          # Export the key in ASCII armor (requires passphrase to unlock)
+          echo "mysecretpassphrase" | gpg --batch --yes --passphrase-fd 0 \
+            --armor --export-secret-keys "$FINGERPRINT" > /tmp/test-gpg-key-passphrase.asc
           echo "GPG_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
-          cat /tmp/test-gpg-key-subkey.asc >> $GITHUB_ENV
+          cat /tmp/test-gpg-key-passphrase.asc >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-          echo "SUBKEY_FPR=$SUBKEY_FPR" >> $GITHUB_ENV
 
       - id: import
         uses: .
         with:
           gpg_private_key: ${{ env.GPG_PRIVATE_KEY }}
-          fingerprint: ${{ env.SUBKEY_FPR }}
+          passphrase: mysecretpassphrase
 
-      - name: Assert fingerprint output matches the specified subkey fingerprint
+      - name: Assert fingerprint output is set
         env:
           FINGERPRINT: ${{ steps.import.outputs.fingerprint }}
-          SUBKEY_FPR: ${{ env.SUBKEY_FPR }}
         run: |
-          echo "fingerprint output: $FINGERPRINT"
-          echo "expected subkey fingerprint: $SUBKEY_FPR"
+          echo "fingerprint: $FINGERPRINT"
           if [ -z "$FINGERPRINT" ]; then
             echo "FAIL: fingerprint output is empty"
             exit 1
           fi
-          if [ "$FINGERPRINT" != "$SUBKEY_FPR" ]; then
-            echo "FAIL: expected fingerprint '$SUBKEY_FPR', got '$FINGERPRINT'"
-            exit 1
-          fi
-          echo "PASS: fingerprint matches the specified subkey fingerprint"
+          echo "PASS: fingerprint is '$FINGERPRINT'"
 
       - name: Assert keyid output is set
         env:
@@ -78,8 +64,8 @@ jobs:
           NAME: ${{ steps.import.outputs.name }}
         run: |
           echo "name: $NAME"
-          if [ "$NAME" != "Subkey User" ]; then
-            echo "FAIL: expected name 'Subkey User', got '$NAME'"
+          if [ "$NAME" != "Passphrase User" ]; then
+            echo "FAIL: expected name 'Passphrase User', got '$NAME'"
             exit 1
           fi
           echo "PASS: name is '$NAME'"
@@ -89,8 +75,8 @@ jobs:
           EMAIL: ${{ steps.import.outputs.email }}
         run: |
           echo "email: $EMAIL"
-          if [ "$EMAIL" != "subkey@example.com" ]; then
-            echo "FAIL: expected email 'subkey@example.com', got '$EMAIL'"
+          if [ "$EMAIL" != "passphrase@example.com" ]; then
+            echo "FAIL: expected email 'passphrase@example.com', got '$EMAIL'"
             exit 1
           fi
           echo "PASS: email is '$EMAIL'"

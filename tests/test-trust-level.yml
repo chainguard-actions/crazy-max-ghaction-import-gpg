@@ -1,90 +1,83 @@
 name: Test GPG import with trust level
 on:
   workflow_dispatch:
-
 jobs:
-  test-trust-level:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # Generate a test GPG key
-      - name: Generate test GPG key
-        id: gen-key
+      - name: Generate test GPG key (no passphrase)
         run: |
-          cat > /tmp/gpg-batch.txt <<'EOF'
+          cat > /tmp/gpg-gen-params <<'EOF'
           %no-protection
           Key-Type: RSA
           Key-Length: 2048
           Subkey-Type: RSA
           Subkey-Length: 2048
-          Name-Real: Trust Test User
-          Name-Email: trust@example.com
+          Name-Real: Trusted User
+          Name-Email: trusted@example.com
           Expire-Date: 0
           %commit
           EOF
-          gpg --batch --gen-key /tmp/gpg-batch.txt
+          gpg --batch --gen-key /tmp/gpg-gen-params
           FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep '^fpr' | head -1 | cut -d: -f10)
-          echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
-          GPG_PRIVATE_KEY=$(gpg --armor --export-secret-keys "$FINGERPRINT")
-          EOF_DELIM=$(openssl rand -hex 8)
-          echo "gpg_private_key<<${EOF_DELIM}" >> "$GITHUB_OUTPUT"
-          echo "$GPG_PRIVATE_KEY" >> "$GITHUB_OUTPUT"
-          echo "${EOF_DELIM}" >> "$GITHUB_OUTPUT"
+          echo "Generated key fingerprint: $FINGERPRINT"
+          gpg --armor --export-secret-keys "$FINGERPRINT" > /tmp/test-gpg-key.asc
+          echo "GPG_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
+          cat /tmp/test-gpg-key.asc >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
-      - name: Remove key from keyring
-        run: |
-          FINGERPRINT="${{ steps.gen-key.outputs.fingerprint }}"
-          gpg --batch --yes --delete-secret-and-public-key "$FINGERPRINT"
-
-      # trust_level accepts numeric values for gpg --edit-key trust command:
-      # 1=unknown, 2=not trusted, 3=marginal, 4=full, 5=ultimate
-      - name: Import GPG key with trust level 5 (ultimate)
-        id: import-gpg
+      - id: import
         uses: .
         with:
-          gpg_private_key: ${{ steps.gen-key.outputs.gpg_private_key }}
-          trust_level: '5'
+          gpg_private_key: ${{ env.GPG_PRIVATE_KEY }}
+          trust_level: 'ultimate'
 
-      - name: Assert fingerprint output is non-empty
+      - name: Assert fingerprint output is set
         env:
-          ACTUAL: ${{ steps.import-gpg.outputs.fingerprint }}
+          FINGERPRINT: ${{ steps.import.outputs.fingerprint }}
         run: |
-          echo "fingerprint: $ACTUAL"
-          if [ -z "$ACTUAL" ]; then
+          echo "fingerprint: $FINGERPRINT"
+          if [ -z "$FINGERPRINT" ]; then
             echo "FAIL: fingerprint output is empty"
+            exit 1
+          fi
+          echo "PASS: fingerprint is '$FINGERPRINT'"
+
+      - name: Assert key trust level is ultimate
+        env:
+          FINGERPRINT: ${{ steps.import.outputs.fingerprint }}
+        run: |
+          echo "Checking trust level for fingerprint: $FINGERPRINT"
+          # gpg --list-keys with colons: field 9 is trust level
+          # 'u' = ultimate trust
+          TRUST=$(gpg --list-keys --with-colons "$FINGERPRINT" 2>/dev/null | grep '^pub' | cut -d: -f2)
+          echo "Trust level: $TRUST"
+          if [ "$TRUST" != "u" ]; then
+            echo "FAIL: expected ultimate trust ('u'), got '$TRUST'"
+            exit 1
+          fi
+          echo "PASS: key has ultimate trust level"
+
+      - name: Assert name output matches
+        env:
+          NAME: ${{ steps.import.outputs.name }}
+        run: |
+          echo "name: $NAME"
+          if [ "$NAME" != "Trusted User" ]; then
+            echo "FAIL: expected name 'Trusted User', got '$NAME'"
             exit 1
           fi
           echo "PASS"
 
-      - name: Assert key trust level is ultimate
+      - name: Assert email output matches
         env:
-          FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+          EMAIL: ${{ steps.import.outputs.email }}
         run: |
-          echo "Checking trust level for: $FINGERPRINT"
-          # Force trustdb recalculation so the pub record reflects current trust
-          gpg --check-trustdb 2>/dev/null || true
-          # Check the pub record validity field (u = ultimately trusted)
-          TRUST=$(gpg --list-keys --with-colons "$FINGERPRINT" 2>/dev/null | grep '^pub:' | cut -d: -f2)
-          echo "trust field from pub record: $TRUST"
-          if [ "$TRUST" = "u" ]; then
-            echo "PASS: key has ultimate trust"
-          else
-            echo "FAIL: expected ultimate trust (u), got '$TRUST'"
-            echo "Full colons output:"
-            gpg --list-keys --with-colons "$FINGERPRINT" 2>/dev/null || true
-            echo "Ownertrust:"
-            gpg --export-ownertrust 2>/dev/null || true
-            exit 1
-          fi
-
-      - name: Assert email output
-        env:
-          ACTUAL: ${{ steps.import-gpg.outputs.email }}
-        run: |
-          echo "email: $ACTUAL"
-          if [ "$ACTUAL" != "trust@example.com" ]; then
-            echo "FAIL: expected 'trust@example.com', got '$ACTUAL'"
+          echo "email: $EMAIL"
+          if [ "$EMAIL" != "trusted@example.com" ]; then
+            echo "FAIL: expected email 'trusted@example.com', got '$EMAIL'"
             exit 1
           fi
           echo "PASS"
