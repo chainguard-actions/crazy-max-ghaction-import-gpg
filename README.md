@@ -8,7 +8,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
-| v7.0.0 | [`v7.0.0`](https://github.com/chainguard-actions/crazy-max-ghaction-import-gpg/tree/v7.0.0) | — |
+| v7.0.0 | [`v7.0.0`](https://github.com/chainguard-actions/crazy-max-ghaction-import-gpg/tree/v7.0.0) | [`2dc316d`](https://github.com/crazy-max/ghaction-import-gpg/commit/2dc316deee8e90f13e1a351ab510b4d5bc0c82cd) |
 
 ## Privacy
 
