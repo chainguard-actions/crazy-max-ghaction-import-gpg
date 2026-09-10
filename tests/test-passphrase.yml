@@ -18,24 +18,24 @@ jobs:
           Name-Real: Passphrase User
           Name-Email: passphrase@example.com
           Expire-Date: 0
-          Passphrase: mysecretpassphrase
+          Passphrase: supersecret123
           %commit
           EOF
           gpg --batch --gen-key /tmp/gpg-gen-params
           FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep '^fpr' | head -1 | cut -d: -f10)
           echo "Generated key fingerprint: $FINGERPRINT"
-          # Export the key in ASCII armor (requires passphrase to unlock)
-          echo "mysecretpassphrase" | gpg --batch --yes --passphrase-fd 0 \
-            --armor --export-secret-keys "$FINGERPRINT" > /tmp/test-gpg-key-passphrase.asc
+          # Export the key in ASCII armor (passphrase-protected)
+          gpg --batch --passphrase 'supersecret123' --pinentry-mode loopback \
+            --armor --export-secret-keys "$FINGERPRINT" > /tmp/test-gpg-key-pp.asc
           echo "GPG_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
-          cat /tmp/test-gpg-key-passphrase.asc >> $GITHUB_ENV
+          cat /tmp/test-gpg-key-pp.asc >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
       - id: import
         uses: .
         with:
           gpg_private_key: ${{ env.GPG_PRIVATE_KEY }}
-          passphrase: mysecretpassphrase
+          passphrase: supersecret123
 
       - name: Assert fingerprint output is set
         env:
