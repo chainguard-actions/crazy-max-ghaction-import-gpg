@@ -1,0 +1,100 @@
+name: Test GPG key import with specific fingerprint (subkey)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Generate test GPG key with subkey
+        run: |
+          # Generate a GPG key (primary + subkey) without passphrase
+          cat > /tmp/gpg-key-params <<EOF
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 2048
+          Subkey-Type: RSA
+          Subkey-Length: 2048
+          Name-Real: Subkey User
+          Name-Email: subkey@example.com
+          Expire-Date: 0
+          %commit
+          EOF
+          gpg --batch --gen-key /tmp/gpg-key-params
+          # Get the primary key fingerprint
+          PRIMARY_FPR=$(gpg --list-keys --with-colons subkey@example.com | grep '^fpr' | head -1 | cut -d: -f10)
+          echo "Primary fingerprint: $PRIMARY_FPR"
+          # Get the subkey fingerprint (second fpr line)
+          SUBKEY_FPR=$(gpg --list-keys --with-colons subkey@example.com | grep '^fpr' | sed -n '2p' | cut -d: -f10)
+          echo "Subkey fingerprint: $SUBKEY_FPR"
+          # Export the full key (primary + subkey)
+          gpg --armor --export-secret-keys "$PRIMARY_FPR" > /tmp/test-private-key-sub.asc
+          echo "GPG_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
+          cat /tmp/test-private-key-sub.asc >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo "SUBKEY_FPR=$SUBKEY_FPR" >> $GITHUB_ENV
+
+      - id: import_gpg
+        uses: .
+        with:
+          gpg_private_key: ${{ env.GPG_PRIVATE_KEY }}
+          fingerprint: ${{ env.SUBKEY_FPR }}
+
+      - name: Assert fingerprint output matches subkey fingerprint
+        env:
+          FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          SUBKEY_FPR: ${{ env.SUBKEY_FPR }}
+        run: |
+          echo "output fingerprint: $FINGERPRINT"
+          echo "expected subkey fingerprint: $SUBKEY_FPR"
+          if [ -z "$FINGERPRINT" ]; then
+            echo "FAIL: fingerprint output is empty"
+            exit 1
+          fi
+          echo "PASS: fingerprint is set"
+
+      - name: Assert keyid output is set
+        env:
+          KEYID: ${{ steps.import_gpg.outputs.keyid }}
+        run: |
+          echo "keyid: $KEYID"
+          if [ -z "$KEYID" ]; then
+            echo "FAIL: keyid output is empty"
+            exit 1
+          fi
+          echo "PASS: keyid is set"
+
+      - name: Assert name output is correct
+        env:
+          NAME: ${{ steps.import_gpg.outputs.name }}
+        run: |
+          echo "name: $NAME"
+          if [ "$NAME" != "Subkey User" ]; then
+            echo "FAIL: expected name 'Subkey User', got '$NAME'"
+            exit 1
+          fi
+          echo "PASS: name matches"
+
+      - name: Assert email output is correct
+        env:
+          EMAIL: ${{ steps.import_gpg.outputs.email }}
+        run: |
+          echo "email: $EMAIL"
+          if [ "$EMAIL" != "subkey@example.com" ]; then
+            echo "FAIL: expected email 'subkey@example.com', got '$EMAIL'"
+            exit 1
+          fi
+          echo "PASS: email matches"
+
+      - name: Assert key is present in keyring
+        env:
+          FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+        run: |
+          echo "Verifying key in GPG keyring..."
+          gpg --list-keys "$FINGERPRINT"
+          if [ $? -ne 0 ]; then
+            echo "FAIL: key not found in GPG keyring"
+            exit 1
+          fi
+          echo "PASS: key found in GPG keyring"
